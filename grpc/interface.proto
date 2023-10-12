@@ -12,10 +12,6 @@ message Request {
     int32 share = 1;
 }
 
-message Acknowledgement {
-    string ack = 1;
-}
-
 //for exam we can use assignment3chitty/protos instead of github
 
 //Important commands:

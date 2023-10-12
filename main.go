@@ -98,7 +98,7 @@ func main() {
 		p.clients[port] = c
 	}
 
-	log.Printf("Peer %v started", p.name)
+	log.Printf("Peer %v started, with private value %v", p.name, p.privateValue)
 	if ownPort == 5000 {
 		time.Sleep(1 * time.Second)
 	} else if ownPort == 5001 {
@@ -147,7 +147,13 @@ func (p *peer) HandlePeerRequest(ctx context.Context, req *node.Request) (*empty
 			p.summedValues += share
 		}
 		if p.id == 5003 {
-			log.Printf("Do hospital stuff")
+			log.Printf("Hospital recevied all shares")
+			//print shares recieved, and sum em up, print them
+			for _, share := range p.receivedShares {
+				log.Printf("Hospital has share %v", share)
+			}
+			log.Printf("Hospital has final output aggregated sum of: %v", p.summedValues)
+
 		} else {
 			//peer is sending to hospital
 			log.Printf("Peer %v is sending to hospital B", p.name)
@@ -165,6 +171,16 @@ func (p *peer) sendSharesToAllPeers() {
 	someShareTwo := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
 	//Share three should have difference between share one and share two and P's private value
 	someShareThree := p.privateValue - (someShareOne + someShareTwo)
+
+	//make sure someShareone two three add up to private value
+	if someShareOne+someShareTwo+someShareThree != p.privateValue {
+		log.Printf("Shares do not add up to private value")
+	}
+	//print the math
+	log.Printf("Peer %v has private value %v", p.name, p.privateValue)
+	log.Printf("Peer %v has created share one %v", p.name, someShareOne)
+	log.Printf("Peer %v has created share two %v", p.name, someShareTwo)
+	log.Printf("Peer %v has created share three %v", p.name, someShareThree)
 
 	log.Printf("Peer %v is sending shares to all peers", p.name)
 

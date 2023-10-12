@@ -28,7 +28,6 @@ type peer struct {
 	ctx            context.Context
 }
 
-var uniqueIdentifier = int32(0)
 var randomValueCap = int32(1000)
 
 func main() {
@@ -98,17 +97,8 @@ func main() {
 		p.clients[port] = c
 	}
 
-	log.Printf("Peer %v started, with private value %v", p.name, p.privateValue)
-	if ownPort == 5000 {
-		time.Sleep(1 * time.Second)
-	} else if ownPort == 5001 {
-		time.Sleep(2 * time.Second)
-	} else if ownPort == 5002 {
-		time.Sleep(3 * time.Second)
-	} else if ownPort == 5003 {
-		time.Sleep(4 * time.Second)
-	}
 	if ownPort != 5003 {
+		log.Printf("Peer %v started, with private value %v", p.name, p.privateValue)
 		p.sendSharesToAllPeers()
 	}
 
@@ -130,7 +120,7 @@ func main() {
 func (p *peer) HandlePeerRequest(ctx context.Context, req *node.Request) (*emptypb.Empty, error) {
 	//p er den client der svarer på requesten.
 	//req kommer fra anden peer.
-	//Reply er det svar peer får.
+	//Reply er det svar den anden peer får.
 
 	log.Printf("Peer %v received data %v", p.name, req.Share)
 	//add share to receivedShares
@@ -146,17 +136,11 @@ func (p *peer) HandlePeerRequest(ctx context.Context, req *node.Request) (*empty
 			log.Printf("Peer %v has share %v", p.name, share)
 			p.summedValues += share
 		}
-		if p.id == 5003 {
-			log.Printf("Hospital recevied all shares")
-			//print shares recieved, and sum em up, print them
-			for _, share := range p.receivedShares {
-				log.Printf("Hospital has share %v", share)
-			}
+		if p.id == 5003 { //If we are hospital, instead of sending shares again, just sum up the values, as that is final output
 			log.Printf("Hospital has final output aggregated sum of: %v", p.summedValues)
 
 		} else {
-			//peer is sending to hospital
-			log.Printf("Peer %v is sending to hospital B", p.name)
+			log.Printf("Peer %v is sending to hospital", p.name)
 			p.sendMessageToHospital()
 		}
 	}
@@ -167,42 +151,35 @@ func (p *peer) HandlePeerRequest(ctx context.Context, req *node.Request) (*empty
 func (p *peer) sendSharesToAllPeers() {
 
 	//Share One and Share Two should be between -RandomValueCap and RandomValueCap
-	someShareOne := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
-	someShareTwo := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
+	shareForAlice := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
+	shareForBob := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
 	//Share three should have difference between share one and share two and P's private value
-	someShareThree := p.privateValue - (someShareOne + someShareTwo)
+	shareForCharlie := p.privateValue - (shareForAlice + shareForBob)
 
-	//make sure someShareone two three add up to private value
-	if someShareOne+someShareTwo+someShareThree != p.privateValue {
+	if shareForAlice+shareForBob+shareForCharlie != p.privateValue {
 		log.Printf("Shares do not add up to private value")
 	}
-	//print the math
-	log.Printf("Peer %v has private value %v", p.name, p.privateValue)
-	log.Printf("Peer %v has created share one %v", p.name, someShareOne)
-	log.Printf("Peer %v has created share two %v", p.name, someShareTwo)
-	log.Printf("Peer %v has created share three %v", p.name, someShareThree)
 
 	log.Printf("Peer %v is sending shares to all peers", p.name)
 
-	//Shit here er fejlen, den looper ikke 4 gange, fordi der er jo kun 3 clients!
 	for portCounter := 5000; portCounter <= 5003; portCounter++ {
 
 		currentClient := p.clients[int32(portCounter)]
-		if portCounter == 5003 { //Hospital
+		if portCounter == 5003 { //Hospital does not make shares and send them
 			continue
-		} else if int32(portCounter) == p.id { //Self
+		} else if int32(portCounter) == p.id { //If it is the peer itself, just add the their own share to receivedShares, without communicating over network.
 
 			if portCounter == 5000 { //Alice
-				log.Printf("Alice is sending share %v to herself", someShareOne)
-				p.receivedShares = append(p.receivedShares, someShareOne)
+				log.Printf("Alice is sending share %v to herself", shareForAlice)
+				p.receivedShares = append(p.receivedShares, shareForAlice)
 			}
 			if portCounter == 5001 { //Bob
-				log.Printf("Bob is sending share %v to himself", someShareTwo)
-				p.receivedShares = append(p.receivedShares, someShareTwo)
+				log.Printf("Bob is sending share %v to himself", shareForBob)
+				p.receivedShares = append(p.receivedShares, shareForBob)
 			}
 			if portCounter == 5002 { //Charlie
-				log.Printf("Charlie is sending share %v to himself", someShareThree)
-				p.receivedShares = append(p.receivedShares, someShareThree)
+				log.Printf("Charlie is sending share %v to himself", shareForCharlie)
+				p.receivedShares = append(p.receivedShares, shareForCharlie)
 			}
 
 			//if all shares are received, sum them up and send to hospital
@@ -212,32 +189,27 @@ func (p *peer) sendSharesToAllPeers() {
 					log.Printf("Peer %v has share %v", p.name, share)
 					p.summedValues += share
 				}
-				if p.id == 5003 {
-					log.Printf("Do hospital stuff")
-				} else {
-					//peer is sending to hospital
-					log.Printf("Peer %v is sending to hospital A", p.name)
-					p.sendMessageToHospital()
-				}
+				//peer is sending to hospital
+				p.sendMessageToHospital()
 			}
 
 		} else if portCounter == 5000 { //Alice
-			aliceRequest := &node.Request{Share: someShareOne}
-			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, someShareOne)
+			aliceRequest := &node.Request{Share: shareForAlice}
+			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, shareForAlice)
 			_, err := currentClient.HandlePeerRequest(p.ctx, aliceRequest)
 			if err != nil {
 				log.Println("something went wrong")
 			}
 		} else if portCounter == 5001 { //Bob
-			bobRequest := &node.Request{Share: someShareTwo}
-			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, someShareTwo)
+			bobRequest := &node.Request{Share: shareForBob}
+			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, shareForBob)
 			_, err := currentClient.HandlePeerRequest(p.ctx, bobRequest)
 			if err != nil {
 				log.Println("something went wrong")
 			}
 		} else if portCounter == 5002 { //Charlie
-			charlieRequest := &node.Request{Share: someShareThree}
-			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, someShareThree)
+			charlieRequest := &node.Request{Share: shareForCharlie}
+			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, shareForCharlie)
 			_, err := currentClient.HandlePeerRequest(p.ctx, charlieRequest)
 			if err != nil {
 				log.Println("something went wrong")
@@ -250,7 +222,7 @@ func (p *peer) sendSharesToAllPeers() {
 func (p *peer) sendMessageToHospital() {
 
 	request := &node.Request{Share: p.summedValues}
-	log.Printf("%v is Sending message to hospital", p.name)
+	log.Printf("Peer %v is sending public aggregated shares: %v to hospital", p.name, p.summedValues)
 
 	_, err := p.clients[5003].HandlePeerRequest(p.ctx, request)
 	if err != nil {

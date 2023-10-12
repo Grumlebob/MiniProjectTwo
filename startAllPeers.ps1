@@ -1,0 +1,1 @@
+wt.exe go run . 0 `;wt.exe go run . 1 `;wt.exe go run . 2 `; wt.exe go run . 3`;

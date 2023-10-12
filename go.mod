@@ -1,9 +1,8 @@
-module github.com/grumlebob/MiniProjectTwo
+module github.com/Grumlebob/MiniProjectTwo
 
 go 1.19
 
 require (
-	github.com/Grumlebob/AuctionSystemReplication v0.0.0-20221123142021-096b18ac5d5c
 	google.golang.org/grpc v1.58.3
 	google.golang.org/protobuf v1.31.0
 )

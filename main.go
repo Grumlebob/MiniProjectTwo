@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -13,15 +12,15 @@ import (
 	"strings"
 	"time"
 
-	node "github.com/Grumlebob/AuctionSystemReplication/grpc"
+	node "github.com/Grumlebob/MiniProjectTwo/grpc"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type peer struct {
 	node.UnimplementedNodeServer
 	id             int32
+	name           string
 	privateValue   int32
 	receivedShares []int32
 	summedValues   int32
@@ -42,11 +41,26 @@ func main() {
 
 	randomPrivateValue := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
 
+	//if ownport is port 5000 (Alice), 5001(Bob), 5002(Charlie), 5003(Hospital)
+	nameOfPeer := ""
+	if ownPort == 5000 {
+		nameOfPeer = "Alice"
+	} else if ownPort == 5001 {
+		nameOfPeer = "Bob"
+	} else if ownPort == 5002 {
+		nameOfPeer = "Charlie"
+	} else if ownPort == 5003 {
+		nameOfPeer = "Hospital"
+	} else {
+		nameOfPeer = "Unknown"
+	}
+
 	defer cancel()
 	p := &peer{
 		id:             ownPort,
+		name:           nameOfPeer,
 		privateValue:   randomPrivateValue,
-		receivedShares: make([]int32, 3),
+		receivedShares: make([]int32, 0),
 		summedValues:   0,
 		clients:        make(map[int32]node.NodeClient),
 		ctx:            ctx,
@@ -65,14 +79,17 @@ func main() {
 			log.Fatalf("failed to server %v", err)
 		}
 	}()
-	//3 Peers connected on port 5000 (Alice), 5001(Bob), 5002(Charlie), 5003(Hospital)
+	//4 Peers connected on port 5000 (Alice), 5001(Bob), 5002(Charlie), 5003(Hospital)
 	for i := 0; i < 4; i++ {
 		port := int32(5000) + int32(i)
 		if port == ownPort {
 			continue
 		}
+		//tlsConfig := credentials.NewTLS(&tls.Config{InsecureSkipVerify: false}) //accept all certificates
+
 		var conn *grpc.ClientConn
-		conn, err := grpc.Dial(fmt.Sprintf("localhost:%v", port), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+		fmt.Printf("Trying to dial: %v\n", port)
+		conn, err := grpc.Dial(fmt.Sprintf(":%v", port), grpc.WithInsecure(), grpc.WithBlock())
 		if err != nil {
 			log.Fatalf("Could not connect: %s", err)
 		}
@@ -81,69 +98,147 @@ func main() {
 		p.clients[port] = c
 	}
 
+	log.Printf("Peer %v started", p.name)
+	if ownPort == 5000 {
+		time.Sleep(1 * time.Second)
+	} else if ownPort == 5001 {
+		time.Sleep(2 * time.Second)
+	} else if ownPort == 5002 {
+		time.Sleep(3 * time.Second)
+	} else if ownPort == 5003 {
+		time.Sleep(4 * time.Second)
+	}
+	if ownPort != 5003 {
+		p.sendSharesToAllPeers()
+	}
+
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		text := strings.ToLower(scanner.Text())
 
-		//FORCE CRASH COMMAND
-		if strings.Contains(text, "crash") {
-			log.Printf("Crashing node id %v ", p.id)
-			os.Exit(1)
-		}
-	}
-}
-
-func (p *peer) HandlePeerRequest(ctx context.Context, req *node.Request) (*node.Reply, error) {
-	//p er den client der svarer på requesten.
-	//req kommer fra anden peer.
-	//Reply er det svar peer får.
-	if p.state == WANTED {
-		if req.State == RELEASED {
-			p.responseNeeded--
-		}
-		if req.State == WANTED {
-			if req.LamportTime > p.lamportTime {
-				p.responseNeeded--
-			} else if req.LamportTime == p.lamportTime && req.Id < p.id {
-				p.responseNeeded--
+		//FORCE print
+		if strings.Contains(text, "print") {
+			log.Printf("Peer %v has value %v", p.name, p.privateValue)
+			log.Printf("has received %v shares", len(p.receivedShares))
+			for i := range p.receivedShares {
+				log.Printf("share %v is %v", i, p.receivedShares[i])
 			}
 		}
 	}
-	p.lamportTime = int32(math.Max(float64(p.lamportTime), float64(req.LamportTime))) + 1
-	reply := &node.Reply{Id: p.id, State: p.state, LamportTime: p.lamportTime}
-	return reply, nil
 }
 
-func (p *peer) sendMessageToAllPeers() {
-	request := &node.Request{Id: p.id, State: p.state, LamportTime: p.lamportTime}
-	for _, client := range p.clients {
-		reply, err := client.HandlePeerRequest(p.ctx, request)
-		if err != nil {
-			log.Println("something went wrong")
-		}
+func (p *peer) HandlePeerRequest(ctx context.Context, req *node.Request) (*emptypb.Empty, error) {
+	//p er den client der svarer på requesten.
+	//req kommer fra anden peer.
+	//Reply er det svar peer får.
 
+	log.Printf("Peer %v received data %v", p.name, req.Share)
+	//add share to receivedShares
+	p.receivedShares = append(p.receivedShares, req.Share)
+
+	//print how many shares were received so far
+	log.Printf("Peer %v received a total of %v shares", p.name, len(p.receivedShares))
+
+	//if all shares are received, sum them up and send to hospital
+	if len(p.receivedShares) == 3 {
+		log.Printf("Peer %v received all shares", p.name)
+		for _, share := range p.receivedShares {
+			log.Printf("Peer %v has share %v", p.name, share)
+			p.summedValues += share
+		}
+		if p.id == 5003 {
+			log.Printf("Do hospital stuff")
+		} else {
+			//peer is sending to hospital
+			log.Printf("Peer %v is sending to hospital B", p.name)
+			p.sendMessageToHospital()
+		}
 	}
+
+	return &emptypb.Empty{}, nil
 }
 
-func (p *peer) sendHeartbeatPingToPeerId(peerId int32) {
-	_, found := p.clients[peerId]
-	if !found {
-		log.Printf("Client node %v is dead", peerId)
-		//Remove dead node from list of clients
-		delete(p.clients, peerId)
-		//If leader crashed, elect new leader
-		if peerId == p.idOfPrimaryReplicationManager {
+func (p *peer) sendSharesToAllPeers() {
+
+	//Share One and Share Two should be between -RandomValueCap and RandomValueCap
+	someShareOne := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
+	someShareTwo := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
+	//Share three should have difference between share one and share two and P's private value
+	someShareThree := p.privateValue - (someShareOne + someShareTwo)
+
+	log.Printf("Peer %v is sending shares to all peers", p.name)
+
+	//Shit here er fejlen, den looper ikke 4 gange, fordi der er jo kun 3 clients!
+	for portCounter := 5000; portCounter <= 5003; portCounter++ {
+
+		currentClient := p.clients[int32(portCounter)]
+		if portCounter == 5003 { //Hospital
+			continue
+		} else if int32(portCounter) == p.id { //Self
+
+			if portCounter == 5000 { //Alice
+				log.Printf("Alice is sending share %v to herself", someShareOne)
+				p.receivedShares = append(p.receivedShares, someShareOne)
+			}
+			if portCounter == 5001 { //Bob
+				log.Printf("Bob is sending share %v to himself", someShareTwo)
+				p.receivedShares = append(p.receivedShares, someShareTwo)
+			}
+			if portCounter == 5002 { //Charlie
+				log.Printf("Charlie is sending share %v to himself", someShareThree)
+				p.receivedShares = append(p.receivedShares, someShareThree)
+			}
+
+			//if all shares are received, sum them up and send to hospital
+			if len(p.receivedShares) == 3 {
+				log.Printf("Peer %v received all shares", p.name)
+				for _, share := range p.receivedShares {
+					log.Printf("Peer %v has share %v", p.name, share)
+					p.summedValues += share
+				}
+				if p.id == 5003 {
+					log.Printf("Do hospital stuff")
+				} else {
+					//peer is sending to hospital
+					log.Printf("Peer %v is sending to hospital A", p.name)
+					p.sendMessageToHospital()
+				}
+			}
+
+		} else if portCounter == 5000 { //Alice
+			aliceRequest := &node.Request{Share: someShareOne}
+			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, someShareOne)
+			_, err := currentClient.HandlePeerRequest(p.ctx, aliceRequest)
+			if err != nil {
+				log.Println("something went wrong")
+			}
+		} else if portCounter == 5001 { //Bob
+			bobRequest := &node.Request{Share: someShareTwo}
+			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, someShareTwo)
+			_, err := currentClient.HandlePeerRequest(p.ctx, bobRequest)
+			if err != nil {
+				log.Println("something went wrong")
+			}
+		} else if portCounter == 5002 { //Charlie
+			charlieRequest := &node.Request{Share: someShareThree}
+			log.Printf("Port %v is sending to %v, with share %v", p.id, portCounter, someShareThree)
+			_, err := currentClient.HandlePeerRequest(p.ctx, charlieRequest)
+			if err != nil {
+				log.Println("something went wrong")
+			}
 		}
-		return
 	}
-	_, err := p.clients[peerId].PingLeader(p.ctx, &emptypb.Empty{})
+
+}
+
+func (p *peer) sendMessageToHospital() {
+
+	request := &node.Request{Share: p.summedValues}
+	log.Printf("%v is Sending message to hospital", p.name)
+
+	_, err := p.clients[5003].HandlePeerRequest(p.ctx, request)
 	if err != nil {
-		log.Printf("Client node %v is dead", peerId)
-		//Remove dead node from list of clients
-		delete(p.clients, peerId)
-		//If leader crashed, elect new leader
-		if peerId == p.idOfPrimaryReplicationManager {
-			p.LookAtMeLookAtMeIAmTheCaptainNow()
-		}
+		log.Println("something went wrong")
 	}
+
 }

@@ -5,9 +5,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
+	"math/rand"
 	"net"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,42 +21,16 @@ import (
 
 type peer struct {
 	node.UnimplementedNodeServer
-	id                            int32
-	agreementsNeededFromBackups   int32
-	auctionState                  string
-	replicationRole               string
-	idOfPrimaryReplicationManager int32
-	highestBidOnCurrentAuction    int32
-	winnerId                      int32
-	currentItem                   string
-	clients                       map[int32]node.NodeClient
-	requestsHandled               map[int32]string
-	ctx                           context.Context
+	id             int32
+	privateValue   int32
+	receivedShares []int32
+	summedValues   int32
+	clients        map[int32]node.NodeClient
+	ctx            context.Context
 }
 
-//Primary-backup replication implementation.
-//• 1. Request: The front end issues the request, containing a unique identifier, to the primary.
-//• 2. Coordination: The primary takes each request atomically, in the order in which
-//it receives it. It checks the unique identifier, in case it has already executed the
-//request, and if so it simply resends the response.
-//• 3. Execution: The primary executes the request and stores the response.
-//• 4. Agreement: If the request is an update, then the primary sends the updated
-//state, the response and the unique identifier to all the backups. The backups send an acknowledgement.
-//• 5. Response: The primary responds to the front end, which hands the response back to the client.
-
-const (
-	// Node role for primary-back replication
-	PRIMARY = "PRIMARY"
-	BACKUP  = "BACKUP"
-)
-
-const (
-	// Auction state
-	OPEN   = "Open"
-	CLOSED = "Closed"
-)
-
 var uniqueIdentifier = int32(0)
+var randomValueCap = int32(1000)
 
 func main() {
 	arg1, _ := strconv.ParseInt(os.Args[1], 10, 32)
@@ -64,17 +39,17 @@ func main() {
 	log.SetFlags(log.Ltime)
 
 	ctx, cancel := context.WithCancel(context.Background())
+
+	randomPrivateValue := rand.New(rand.NewSource(time.Now().UnixNano())).Int31n(randomValueCap)
+
 	defer cancel()
 	p := &peer{
-		id:                          ownPort,
-		agreementsNeededFromBackups: 0,
-		winnerId:                    0,
-		clients:                     make(map[int32]node.NodeClient),
-		requestsHandled:             make(map[int32]string),
-		ctx:                         ctx,
-		auctionState:                CLOSED,
-		replicationRole:             BACKUP,
-		currentItem:                 "",
+		id:             ownPort,
+		privateValue:   randomPrivateValue,
+		receivedShares: make([]int32, 3),
+		summedValues:   0,
+		clients:        make(map[int32]node.NodeClient),
+		ctx:            ctx,
 	}
 
 	// Create listener tcp on port ownPort
@@ -90,8 +65,8 @@ func main() {
 			log.Fatalf("failed to server %v", err)
 		}
 	}()
-	//3 Peers connected on port 5000, 5001, 5002
-	for i := 0; i < 3; i++ {
+	//3 Peers connected on port 5000 (Alice), 5001(Bob), 5002(Charlie), 5003(Hospital)
+	for i := 0; i < 4; i++ {
 		port := int32(5000) + int32(i)
 		if port == ownPort {
 			continue
@@ -106,86 +81,10 @@ func main() {
 		p.clients[port] = c
 	}
 
-	//Assign primary / backup role
-	p.LookAtMeLookAtMeIAmTheCaptainNow()
-
-	//Open and close auctions after set timers
-	if p.replicationRole == PRIMARY {
-		go func() {
-			items := []string{"Laptop", "Phone", "Tablet", "TV", "Headphones", "Watch"}
-			for _, item := range items {
-				p.openAuction(item)
-				time.Sleep(45 * time.Second)
-				p.closeAuction()
-				time.Sleep(10 * time.Second)
-			}
-		}()
-	}
-
-	//Send heartbeats to primary
-	if p.replicationRole == BACKUP {
-		go func() {
-			for {
-				p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
-				time.Sleep(300 * time.Millisecond)
-				//Backup promoted to Primary
-				if p.replicationRole == PRIMARY {
-					items := []string{"Table", "Furniture", "YoYo", "Painting", "Diamonds", "Tobacco"}
-					for _, item := range items {
-						p.openAuction(item)
-						time.Sleep(45 * time.Second)
-						p.closeAuction()
-						time.Sleep(10 * time.Second)
-					}
-				}
-			}
-		}()
-	}
-
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		text := strings.ToLower(scanner.Text())
-		//RESULT COMMAND
-		if strings.Contains(text, "result") {
-			if p.replicationRole == PRIMARY {
-				outcome, _ := p.Result(p.ctx, &emptypb.Empty{})
-				log.Printf("%s \nThe highest bid: %v", outcome.AuctionStatus, outcome.HighestBid)
-			} else if p.replicationRole == BACKUP {
-				p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
-				_, foundPrimary := p.clients[p.idOfPrimaryReplicationManager]
-				if foundPrimary {
-					outcome, _ := p.clients[p.idOfPrimaryReplicationManager].Result(p.ctx, &emptypb.Empty{})
-					log.Printf("%s \nThe highest bid: %v", outcome.AuctionStatus, outcome.HighestBid)
-				}
-			}
-		}
-		//BID COMMAND
-		FindAllNumbers := regexp.MustCompile(`\d+`).FindAllString(text, 1)
-		if len(FindAllNumbers) > 0 {
-			numeric, _ := strconv.ParseInt(FindAllNumbers[0], 10, 32)
-			if strings.Contains(text, "bid") && numeric > 0 {
-				uniqueId := p.getUniqueIdentifier()
-				//Re-send. Happens in case a primary crashes, and a new one is promoted, that message might have been lost.
-				for {
-					if p.replicationRole == PRIMARY {
-						ack, _ := p.Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: uniqueId, Amount: int32(numeric)})
-						log.Println(ack.Ack)
-					} else if p.replicationRole == BACKUP {
-						p.sendHeartbeatPingToPeerId(p.idOfPrimaryReplicationManager)
-						_, foundPrimary := p.clients[p.idOfPrimaryReplicationManager]
-						if foundPrimary {
-							ack, _ := p.clients[p.idOfPrimaryReplicationManager].Bid(p.ctx, &node.Bid{ClientId: p.id, UniqueBidId: uniqueId, Amount: int32(numeric)})
-							log.Println(ack.Ack)
-						}
-					}
-					//If response is stored break, else re-send
-					_, foundUniqueRequest := p.requestsHandled[uniqueId]
-					if foundUniqueRequest {
-						break
-					}
-				}
-			}
-		}
+
 		//FORCE CRASH COMMAND
 		if strings.Contains(text, "crash") {
 			log.Printf("Crashing node id %v ", p.id)
@@ -194,110 +93,36 @@ func main() {
 	}
 }
 
-func (p *peer) LookAtMeLookAtMeIAmTheCaptainNow() {
-	//	               .                       .     .     .        ..*,...*/
-	//                                            ...       .   .....,*,...*/**..
-	//                                     ,/(@@@@@@@@%**...   .  ...,*,...*/*,..
-	// ............................... .//@@@@@@@@@@@@@@@&#,,.......,*....*/*,....
-	//                                #&@@@@@@@@@@@@@@@@@@@@@@&,      *    ,/*,
-	//                               /&@@@@@@@@@@@@@@@@@@@@@@@@%,     *     /*.
-	//                             .(&&&&&&&&&&&&&&&&&&&@@@@@&&&%,    *     *,.
-	//                             ,&&&&&&&&&&&&&&&&&&&&&&&&&&&&&,    *     *,.
-	//                             *%&&&&&&&&&&&&&&&&&&%%&&&&&&&#     ,    .*,
-	//                             ,%&&&&&&&&&%&&&&&&%%%%%&&&&&&*     ,    .*,
-	//                             .%&&&%%%%%%%&%&&&&&&&&&&&&&%/,     .    .*,
-	//                              %&&&&&&&&&&&&&&%%%%&&&&&&&&%&     .    .*,
-	//                             .%%%%&&&%%%&&&%(&&&&%%%%%&&&&*     .    .*,
-	//                             ,%%&&&&%##%%&&&&%%%%%%%%&&&%       .    .*,
-	//                              /%&&&&##%%&%%&%%%%%(#%%#/         .    .*,
-	//                      .(       /%&&%%&&%&&&&&&&&&%(##           .    .*,
-	//                      #(     (%/%&&&&&&%%%&&&&&&&%#%*           ..   .*,
-	//                     #%    *&%   &&&&&&&&&&&&&&&&&&&##/         ..   .*,
-	//           * @ @  %  //(#  #. @ ./ #%&&  * @*  /@ *  #  #@   #/ @  & %*,.
-	//           * & % # . /. @ . . , ./ ,#@@  @@@  . @  .&&  @@ & (* @    %**.
-	//           * & % % @ /&&@ . . @ ./  .@@.   @ ,* @ *&&&  @, @  * @ ,* @%%%%#(.
-	//                   &&&&&&&&&&&&&@@@@@@@@@@@@@@@@&&&&&&&@@@@&&&&&&&&%%%%%%%%%##(
-	//                  &&&&&&&&&&@&&@ .( @*  .@ (  &  @@@@@@@@&&&&&&&&&&&&%%%%%%%%%%%
-	//                ,&&@@@@@&&&&&&&@  . @  , @ .  / .@@@@@@@@&&&&&&&&&&&%%%%%%%%%%%%
-	//               /&&&@@@@@@@&&&&&@ /  @  , @.  #  @@@@@@@@@@&&&&&&&&&%#%%%%%%%&&&%
-	//              *&&&&@@@@@@@&&&&&&@@@@@@@@@@@@@@@@@@@/*////*/#(%/(#/*#**%(*/(*
-	//If primary fails, just promote highest id backup to primary.
-	shouldBeRole := BACKUP
-	highestClientSeen := int32(0)
-	for i := range p.clients {
-		if i < p.id && p.id > highestClientSeen {
-			shouldBeRole = PRIMARY
-			highestClientSeen = p.id
-		} else if i > p.id {
-			highestClientSeen = i
-			shouldBeRole = BACKUP
+func (p *peer) HandlePeerRequest(ctx context.Context, req *node.Request) (*node.Reply, error) {
+	//p er den client der svarer på requesten.
+	//req kommer fra anden peer.
+	//Reply er det svar peer får.
+	if p.state == WANTED {
+		if req.State == RELEASED {
+			p.responseNeeded--
 		}
-	}
-	p.replicationRole = shouldBeRole
-	p.idOfPrimaryReplicationManager = highestClientSeen
-	if len(p.clients) == 0 {
-		p.replicationRole = PRIMARY
-		p.idOfPrimaryReplicationManager = p.id
-	}
-	log.Printf("Replication role: %v \n", p.replicationRole)
-}
-
-func (p *peer) getUniqueIdentifier() (uniqueId int32) {
-	uniqueIdentifier++
-	asString := fmt.Sprintf("%v%v", uniqueIdentifier, p.id)
-	//We don't want to 1+5000, we want 15000 to make them unique...well, unique enough.
-	realId, _ := strconv.ParseInt(asString, 10, 32)
-	return int32(realId)
-}
-
-func (p *peer) openAuction(item string) {
-	if p.auctionState == OPEN {
-		return
-	}
-	p.auctionState = OPEN
-	p.currentItem = item
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-	p.highestBidOnCurrentAuction = 0
-	p.winnerId = 0
-	announceAuction := "Auction for " + item + " is open for 45 seconds! \nEnter Bid <amount> to bid on the item. \nEnter Result to see highest bid"
-	log.Println(announceAuction)
-	p.SendMessageToAllPeers(announceAuction)
-}
-
-func (p *peer) closeAuction() {
-	p.auctionState = CLOSED
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-	announceWinner := fmt.Sprintf("Auction for %s is Over! \nHighest bid was %v\nAuction was won by %v\nNext auction starts in 10 seconds", p.currentItem, p.highestBidOnCurrentAuction, p.winnerId)
-	log.Println(announceWinner)
-	p.SendMessageToAllPeers(announceWinner)
-}
-
-func (p *peer) getAgreementFromAllPeersAndReplicateLeaderData(ack string, identifier int32) (agreementReached bool) {
-	p.agreementsNeededFromBackups = int32(len(p.clients))
-	for id, client := range p.clients {
-		_, err := client.HandleAgreementAndReplicationFromLeader(p.ctx, &node.Replicate{AuctionStatus: p.auctionState, HighestBidOnCurrentAuction: p.highestBidOnCurrentAuction, ResponseForRequest: ack, UniqueIdentifierForRequest: identifier, CurrentItem: p.currentItem, WinnerId: p.winnerId})
-		if err != nil {
-			log.Printf("Client node %v is dead", id)
-			//Remove dead node from list of clients
-			delete(p.clients, id)
-			//If leader crashed, elect new leader
-			if id == p.idOfPrimaryReplicationManager {
-				p.LookAtMeLookAtMeIAmTheCaptainNow()
+		if req.State == WANTED {
+			if req.LamportTime > p.lamportTime {
+				p.responseNeeded--
+			} else if req.LamportTime == p.lamportTime && req.Id < p.id {
+				p.responseNeeded--
 			}
 		}
-		p.agreementsNeededFromBackups--
 	}
-	return p.agreementsNeededFromBackups == 0
+	p.lamportTime = int32(math.Max(float64(p.lamportTime), float64(req.LamportTime))) + 1
+	reply := &node.Reply{Id: p.id, State: p.state, LamportTime: p.lamportTime}
+	return reply, nil
 }
 
-func (p *peer) HandleAgreementAndReplicationFromLeader(ctx context.Context, replicate *node.Replicate) (*node.Acknowledgement, error) {
-	p.auctionState = replicate.AuctionStatus
-	p.highestBidOnCurrentAuction = replicate.HighestBidOnCurrentAuction
-	p.currentItem = replicate.CurrentItem
-	p.winnerId = replicate.WinnerId
-	p.requestsHandled[replicate.UniqueIdentifierForRequest] = replicate.ResponseForRequest
-	reply := &node.Acknowledgement{Ack: "Replicated"}
-	return reply, nil
+func (p *peer) sendMessageToAllPeers() {
+	request := &node.Request{Id: p.id, State: p.state, LamportTime: p.lamportTime}
+	for _, client := range p.clients {
+		reply, err := client.HandlePeerRequest(p.ctx, request)
+		if err != nil {
+			log.Println("something went wrong")
+		}
+
+	}
 }
 
 func (p *peer) sendHeartbeatPingToPeerId(peerId int32) {
@@ -308,7 +133,6 @@ func (p *peer) sendHeartbeatPingToPeerId(peerId int32) {
 		delete(p.clients, peerId)
 		//If leader crashed, elect new leader
 		if peerId == p.idOfPrimaryReplicationManager {
-			p.LookAtMeLookAtMeIAmTheCaptainNow()
 		}
 		return
 	}
@@ -321,69 +145,5 @@ func (p *peer) sendHeartbeatPingToPeerId(peerId int32) {
 		if peerId == p.idOfPrimaryReplicationManager {
 			p.LookAtMeLookAtMeIAmTheCaptainNow()
 		}
-	}
-}
-
-func (p *peer) PingLeader(ctx context.Context, empty *emptypb.Empty) (*node.Acknowledgement, error) {
-	reply := &node.Acknowledgement{Ack: "Alive"}
-	return reply, nil
-}
-
-func (p *peer) SendMessageToAllPeers(message string) {
-	for id, client := range p.clients {
-		_, err := client.BroadcastMessage(p.ctx, &node.Acknowledgement{Ack: message})
-		if err != nil {
-			log.Printf("Client node %v is dead", id)
-			//Remove dead node from list of clients
-			delete(p.clients, id)
-			//If leader crashed, elect new leader
-			if id == p.idOfPrimaryReplicationManager {
-				p.LookAtMeLookAtMeIAmTheCaptainNow()
-			}
-		}
-	}
-}
-
-func (p *peer) BroadcastMessage(ctx context.Context, message *node.Acknowledgement) (*emptypb.Empty, error) {
-	log.Println(message.Ack)
-	return &emptypb.Empty{}, nil
-}
-
-func (p *peer) Bid(ctx context.Context, bid *node.Bid) (*node.Acknowledgement, error) {
-	agreement := false
-	acknowledgement := &node.Acknowledgement{}
-
-	//If already processed, send same Ack.
-	ack, found := p.requestsHandled[bid.UniqueBidId]
-	if found {
-		acknowledgement.Ack = ack
-	} else if p.auctionState == CLOSED && !found {
-		acknowledgement.Ack = "Fail, auction is closed"
-	} else if (p.highestBidOnCurrentAuction < bid.Amount) && (!found) && (p.auctionState == OPEN) {
-		p.highestBidOnCurrentAuction = bid.Amount
-		p.winnerId = bid.ClientId
-		acknowledgement.Ack = "OK"
-	} else if p.highestBidOnCurrentAuction >= bid.Amount && !found && p.auctionState == OPEN {
-		acknowledgement.Ack = "Fail, your bid was too low"
-	}
-
-	p.requestsHandled[bid.UniqueBidId] = acknowledgement.Ack
-
-	agreement = p.getAgreementFromAllPeersAndReplicateLeaderData(acknowledgement.Ack, bid.UniqueBidId)
-	if !agreement {
-		//Can theoretically not enter this if block, due to assumptions stated in the assignment
-		acknowledgement.Ack = "Fail, couldn't reach agreement in phase 4"
-		p.requestsHandled[bid.UniqueBidId] = acknowledgement.Ack
-	}
-
-	return acknowledgement, nil
-
-}
-
-func (p *peer) Result(ctx context.Context, empty *emptypb.Empty) (*node.Outcome, error) {
-	if p.auctionState == OPEN {
-		return &node.Outcome{AuctionStatus: "Auction is OPEN", HighestBid: p.highestBidOnCurrentAuction}, nil
-	} else {
-		return &node.Outcome{AuctionStatus: "Auction is CLOSED", HighestBid: p.highestBidOnCurrentAuction}, nil
 	}
 }

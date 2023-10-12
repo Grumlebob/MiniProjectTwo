@@ -23,11 +23,7 @@ const _ = grpc.SupportPackageIsVersion7
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type NodeClient interface {
-	HandleAgreementAndReplicationFromLeader(ctx context.Context, in *Replicate, opts ...grpc.CallOption) (*Acknowledgement, error)
-	PingLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error)
-	BroadcastMessage(ctx context.Context, in *Acknowledgement, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	Bid(ctx context.Context, in *Bid, opts ...grpc.CallOption) (*Acknowledgement, error)
-	Result(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Outcome, error)
+	HandlePeerRequest(ctx context.Context, in *Request, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type nodeClient struct {
@@ -38,45 +34,9 @@ func NewNodeClient(cc grpc.ClientConnInterface) NodeClient {
 	return &nodeClient{cc}
 }
 
-func (c *nodeClient) HandleAgreementAndReplicationFromLeader(ctx context.Context, in *Replicate, opts ...grpc.CallOption) (*Acknowledgement, error) {
-	out := new(Acknowledgement)
-	err := c.cc.Invoke(ctx, "/grpc.Node/handleAgreementAndReplicationFromLeader", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *nodeClient) PingLeader(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Acknowledgement, error) {
-	out := new(Acknowledgement)
-	err := c.cc.Invoke(ctx, "/grpc.Node/pingLeader", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *nodeClient) BroadcastMessage(ctx context.Context, in *Acknowledgement, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+func (c *nodeClient) HandlePeerRequest(ctx context.Context, in *Request, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, "/grpc.Node/broadcastMessage", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *nodeClient) Bid(ctx context.Context, in *Bid, opts ...grpc.CallOption) (*Acknowledgement, error) {
-	out := new(Acknowledgement)
-	err := c.cc.Invoke(ctx, "/grpc.Node/bid", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *nodeClient) Result(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Outcome, error) {
-	out := new(Outcome)
-	err := c.cc.Invoke(ctx, "/grpc.Node/result", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/grpc.Node/HandlePeerRequest", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -87,11 +47,7 @@ func (c *nodeClient) Result(ctx context.Context, in *emptypb.Empty, opts ...grpc
 // All implementations must embed UnimplementedNodeServer
 // for forward compatibility
 type NodeServer interface {
-	HandleAgreementAndReplicationFromLeader(context.Context, *Replicate) (*Acknowledgement, error)
-	PingLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error)
-	BroadcastMessage(context.Context, *Acknowledgement) (*emptypb.Empty, error)
-	Bid(context.Context, *Bid) (*Acknowledgement, error)
-	Result(context.Context, *emptypb.Empty) (*Outcome, error)
+	HandlePeerRequest(context.Context, *Request) (*emptypb.Empty, error)
 	mustEmbedUnimplementedNodeServer()
 }
 
@@ -99,20 +55,8 @@ type NodeServer interface {
 type UnimplementedNodeServer struct {
 }
 
-func (UnimplementedNodeServer) HandleAgreementAndReplicationFromLeader(context.Context, *Replicate) (*Acknowledgement, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method HandleAgreementAndReplicationFromLeader not implemented")
-}
-func (UnimplementedNodeServer) PingLeader(context.Context, *emptypb.Empty) (*Acknowledgement, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PingLeader not implemented")
-}
-func (UnimplementedNodeServer) BroadcastMessage(context.Context, *Acknowledgement) (*emptypb.Empty, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method BroadcastMessage not implemented")
-}
-func (UnimplementedNodeServer) Bid(context.Context, *Bid) (*Acknowledgement, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Bid not implemented")
-}
-func (UnimplementedNodeServer) Result(context.Context, *emptypb.Empty) (*Outcome, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Result not implemented")
+func (UnimplementedNodeServer) HandlePeerRequest(context.Context, *Request) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HandlePeerRequest not implemented")
 }
 func (UnimplementedNodeServer) mustEmbedUnimplementedNodeServer() {}
 
@@ -127,92 +71,20 @@ func RegisterNodeServer(s grpc.ServiceRegistrar, srv NodeServer) {
 	s.RegisterService(&Node_ServiceDesc, srv)
 }
 
-func _Node_HandleAgreementAndReplicationFromLeader_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Replicate)
+func _Node_HandlePeerRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Request)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(NodeServer).HandleAgreementAndReplicationFromLeader(ctx, in)
+		return srv.(NodeServer).HandlePeerRequest(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/grpc.Node/handleAgreementAndReplicationFromLeader",
+		FullMethod: "/grpc.Node/HandlePeerRequest",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeServer).HandleAgreementAndReplicationFromLeader(ctx, req.(*Replicate))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Node_PingLeader_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(NodeServer).PingLeader(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/grpc.Node/pingLeader",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeServer).PingLeader(ctx, req.(*emptypb.Empty))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Node_BroadcastMessage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Acknowledgement)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(NodeServer).BroadcastMessage(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/grpc.Node/broadcastMessage",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeServer).BroadcastMessage(ctx, req.(*Acknowledgement))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Node_Bid_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Bid)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(NodeServer).Bid(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/grpc.Node/bid",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeServer).Bid(ctx, req.(*Bid))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Node_Result_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(emptypb.Empty)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(NodeServer).Result(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/grpc.Node/result",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NodeServer).Result(ctx, req.(*emptypb.Empty))
+		return srv.(NodeServer).HandlePeerRequest(ctx, req.(*Request))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -225,24 +97,8 @@ var Node_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*NodeServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "handleAgreementAndReplicationFromLeader",
-			Handler:    _Node_HandleAgreementAndReplicationFromLeader_Handler,
-		},
-		{
-			MethodName: "pingLeader",
-			Handler:    _Node_PingLeader_Handler,
-		},
-		{
-			MethodName: "broadcastMessage",
-			Handler:    _Node_BroadcastMessage_Handler,
-		},
-		{
-			MethodName: "bid",
-			Handler:    _Node_Bid_Handler,
-		},
-		{
-			MethodName: "result",
-			Handler:    _Node_Result_Handler,
+			MethodName: "HandlePeerRequest",
+			Handler:    _Node_HandlePeerRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

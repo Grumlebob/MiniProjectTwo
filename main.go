@@ -14,6 +14,7 @@ import (
 
 	node "github.com/Grumlebob/MiniProjectTwo/grpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -65,32 +66,44 @@ func main() {
 		ctx:            ctx,
 	}
 
-	// Create listener tcp on port ownPort
-	list, err := net.Listen("tcp", fmt.Sprintf("localhost:%v", ownPort))
+	//set up server
+	list, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", ownPort))
 	if err != nil {
-		log.Fatalf("Failed to listen on port: %v", err)
+		log.Fatalf("failed to listen: %v", err)
 	}
-	grpcServer := grpc.NewServer()
+
+	serverCert, err := credentials.NewServerTLSFromFile("server.crt", "priv.key")
+	if err != nil {
+		log.Fatalln("failed to create cert", err)
+	}
+
+	grpcServer := grpc.NewServer(grpc.Creds(serverCert))
 	node.RegisterNodeServer(grpcServer, p)
 
+	// start the server
 	go func() {
 		if err := grpcServer.Serve(list); err != nil {
-			log.Fatalf("failed to server %v", err)
+			log.Fatalf("failed to serve %v", err)
 		}
 	}()
-	//4 Peers connected on port 5000 (Alice), 5001(Bob), 5002(Charlie), 5003(Hospital)
-	for i := 0; i < 4; i++ {
+
+	//TLS / certificate credits to Thor (TCLA). The secret sharing is self created. - 4 Peers connected on port 5000 (Alice), 5001(Bob), 5002(Charlie), 5003(Hospital)
+	for i := 0; i <= 3; i++ {
 		port := int32(5000) + int32(i)
 		if port == ownPort {
 			continue
 		}
-		//tlsConfig := credentials.NewTLS(&tls.Config{InsecureSkipVerify: false}) //accept all certificates
 
-		var conn *grpc.ClientConn
-		fmt.Printf("Trying to dial: %v\n", port)
-		conn, err := grpc.Dial(fmt.Sprintf(":%v", port), grpc.WithInsecure(), grpc.WithBlock())
+		//Set up client connections
+		clientCert, err := credentials.NewClientTLSFromFile("server.crt", "")
 		if err != nil {
-			log.Fatalf("Could not connect: %s", err)
+			log.Fatalln("failed to create cert", err)
+		}
+
+		fmt.Printf("Trying to dial: %v\n", port)
+		conn, err := grpc.Dial(fmt.Sprintf("localhost:%v", port), grpc.WithTransportCredentials(clientCert), grpc.WithBlock())
+		if err != nil {
+			log.Fatalf("did not connect: %s", err)
 		}
 		defer conn.Close()
 		c := node.NewNodeClient(conn)

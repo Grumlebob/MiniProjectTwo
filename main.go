@@ -98,7 +98,7 @@ func main() {
 	}
 
 	if ownPort != 5003 {
-		log.Printf("Peer %v started, with private value %v", p.name, p.privateValue)
+		log.Printf("Peer %v port(%v) started, with private value %v", p.name, p.id, p.privateValue)
 		p.sendSharesToAllPeers()
 	}
 
